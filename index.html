@@ -722,19 +722,23 @@ function update(dt) {
     else if (dist < 6) $('hud-status').textContent = 'Fly towards the glow...';
     else $('hud-status').textContent = 'Seeking mate...';
 
-    const gazeThreshold = renderer.xr.isPresenting ? 3.0 : MATING_DISTANCE * 1.5;
-    const mateThreshold = renderer.xr.isPresenting ? 3.0 : MATING_DISTANCE;
-    if (lookDot > 0.88 && dist < gazeThreshold) {
-      gazeTimer += dt;
-      if (Math.floor(gazeTimer * 10) % 5 === 0) {
-        console.log('[Game] Gaze:', Math.floor(gazeTimer / GAZE_DURATION * 100) + '%', 'dist:', dist.toFixed(2));
-      }
-      if (gazeTimer >= GAZE_DURATION && dist < mateThreshold) {
-        startMating();
-        gazeTimer = 0;
+    if (renderer.xr.isPresenting) {
+      if (lookDot > 0.80 && dist < 3.0) {
+        gazeTimer += dt;
+        if (Math.floor(gazeTimer * 10) % 5 === 0) {
+          console.log('[Game] Gaze:', Math.floor(gazeTimer / GAZE_DURATION * 100) + '%', 'dist:', dist.toFixed(2));
+        }
+        if (gazeTimer >= GAZE_DURATION) {
+          startMating();
+          gazeTimer = 0;
+        }
+      } else {
+        gazeTimer = Math.max(0, gazeTimer - dt * 2);
       }
     } else {
-      gazeTimer = Math.max(0, gazeTimer - dt * 2);
+      if (dist < 1.4) {
+        startMating();
+      }
     }
 
     if (gazeTimer > 0.5) {
