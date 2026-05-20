@@ -941,6 +941,16 @@ renderer.xr.addEventListener('sessionstart', () => {
   initAudio();
   startBuzz();
   if (gameState === 'MENU') startGame();
+  const session = renderer.xr.getSession();
+  session.addEventListener('selectstart', () => {
+    moveForward = true;
+    startBuzz();
+    onTap();
+  });
+  session.addEventListener('selectend', () => {
+    moveForward = false;
+    if (gameState !== 'MATING') stopBuzz();
+  });
 });
 renderer.xr.addEventListener('sessionend', () => {
   moveForward = false;
