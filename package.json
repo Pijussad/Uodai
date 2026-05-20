@@ -1,0 +1,11 @@
+{
+  "name": "mosquito-mate-vr",
+  "version": "1.0.0",
+  "description": "VR mosquito mating game - browser-based WebXR experience",
+  "scripts": {
+    "start": "npx serve . -l 8080 --no-clipboard",
+    "dev": "python3 -m http.server 8080"
+  },
+  "keywords": ["webxr", "vr", "threejs", "game"],
+  "license": "MIT"
+}

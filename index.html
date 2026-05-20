@@ -1,0 +1,789 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Mosquito Mate VR</title>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0000; touch-action: none; }
+  body { font-family: system-ui, -apple-system, sans-serif; }
+
+  canvas { display: block; }
+
+  #ui {
+    position: fixed; inset: 0; z-index: 10;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    pointer-events: none;
+  }
+  #ui > * { pointer-events: auto; }
+
+  .screen {
+    display: flex; flex-direction: column; align-items: center; gap: 20px;
+    padding: 40px 30px; border-radius: 20px;
+    background: rgba(10, 0, 20, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 50, 80, 0.25);
+    box-shadow: 0 0 60px rgba(255, 30, 60, 0.15);
+    text-align: center; max-width: 90vw;
+  }
+
+  .screen h1 {
+    font-size: clamp(20px, 5vw, 36px); color: #ff4466;
+    text-shadow: 0 0 20px rgba(255, 68, 102, 0.5);
+    letter-spacing: 1px;
+  }
+  .screen h2 {
+    font-size: clamp(24px, 6vw, 40px); color: #ff6688;
+    text-shadow: 0 0 30px rgba(255, 102, 136, 0.6);
+  }
+  .screen p { color: #ddaacc; font-size: clamp(14px, 3vw, 18px); line-height: 1.5; }
+
+  .btn {
+    padding: 14px 40px; font-size: clamp(16px, 4vw, 20px); font-weight: 700;
+    border: none; border-radius: 12px; cursor: pointer; letter-spacing: 1px;
+    transition: transform 0.15s, box-shadow 0.15s; outline: none;
+    -webkit-tap-highlight-color: transparent; user-select: none;
+    background: linear-gradient(135deg, #ff3355, #cc2244);
+    color: #fff; box-shadow: 0 4px 20px rgba(255, 51, 85, 0.4);
+  }
+  .btn:hover { transform: scale(1.05); box-shadow: 0 6px 28px rgba(255, 51, 85, 0.55); }
+  .btn:active { transform: scale(0.96); }
+  .btn:disabled { opacity: 0.4; transform: none; cursor: not-allowed; }
+
+  #game-hud { display: none; flex-direction: column; align-items: center; gap: 8px; }
+
+  .hud-label { color: #ff8899; font-size: 13px; text-transform: uppercase; letter-spacing: 2px; }
+
+  .hud-bar-outer {
+    width: min(280px, 70vw); height: 8px; background: rgba(255, 50, 80, 0.15);
+    border-radius: 4px; overflow: hidden;
+  }
+  .hud-bar-inner {
+    height: 100%; width: 0%; background: linear-gradient(90deg, #ff3355, #ff7799);
+    border-radius: 4px; transition: width 0.3s;
+  }
+
+  .hint-text {
+    position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%);
+    color: rgba(255, 200, 220, 0.6); font-size: 13px; text-align: center;
+    pointer-events: none; z-index: 5;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+  .pulse-anim { animation: pulse 0.8s ease-in-out infinite; }
+
+  @keyframes heartFloat {
+    0% { transform: translateY(0) scale(1); opacity: 1; }
+    100% { transform: translateY(-40px) scale(1.4); opacity: 0; }
+  }
+</style>
+</head>
+<body>
+
+<div id="ui">
+  <div id="start-screen" class="screen">
+    <h1>Mosquito Mate VR</h1>
+    <p>You are a mosquito.<br>Find a mate. Fly close and connect.</p>
+    <button id="start-btn" class="btn">START</button>
+    <p style="font-size:11px;color:#886677;margin-top:-5px;">
+      Touch and hold / Press W / Click &amp; drag to fly
+    </p>
+  </div>
+
+  <div id="game-hud">
+    <span class="hud-label" id="hud-status">Seeking mate...</span>
+    <div class="hud-bar-outer" id="hud-bar-container">
+      <div class="hud-bar-inner" id="hud-bar"></div>
+    </div>
+  </div>
+
+  <div id="complete-screen" class="screen" style="display:none;">
+    <h2>Mated!</h2>
+    <p>The circle of life continues.</p>
+    <button id="restart-btn" class="btn">MATE AGAIN</button>
+  </div>
+</div>
+
+<div class="hint-text" id="hint"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { VRButton } from 'three/addons/webxr/VRButton.js';
+
+const $ = (s) => document.getElementById(s);
+
+const MATING_DISTANCE = 1.0;
+const MOVE_SPEED = 1.8;
+const MATING_DURATION = 5.0;
+const GAZE_DURATION = 2.5;
+
+let gameState = 'MENU';
+let matingTimer = 0;
+let gazeTimer = 0;
+let moveForward = false;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.xr.enabled = true;
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0010);
+scene.fog = new THREE.FogExp2(0x0a0010, 0.0008);
+
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 80);
+const player = new THREE.Group();
+player.add(camera);
+camera.position.set(0, 0, 0);
+scene.add(player);
+player.position.set(0, 1.6, -6);
+
+const ambient = new THREE.AmbientLight(0x221122, 0.6);
+scene.add(ambient);
+const dirLight = new THREE.DirectionalLight(0xffccbb, 0.8);
+dirLight.position.set(6, 10, 3);
+scene.add(dirLight);
+const pointLight = new THREE.PointLight(0xff4466, 2.5, 20, 1);
+pointLight.position.set(0, 1.6, 2);
+scene.add(pointLight);
+const pointLight2 = new THREE.PointLight(0x4422ff, 0.6, 15, 2);
+pointLight2.position.set(3, 0.5, 5);
+scene.add(pointLight2);
+
+function createSurface(y, spread, color) {
+  const geo = new THREE.PlaneGeometry(spread, spread);
+  const mat = new THREE.MeshStandardMaterial({
+    color, roughness: 1, side: THREE.DoubleSide, transparent: true, opacity: 0.25, depthWrite: false,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.y = y;
+  scene.add(mesh);
+  return mesh;
+}
+createSurface(-3.5, 60, 0x1a0a1a);
+
+for (let i = 0; i < 30; i++) {
+  const h = 2 + Math.random() * 8;
+  const r = 0.08 + Math.random() * 0.35;
+  const geo = new THREE.CylinderGeometry(r * 0.4, r, h, 8, 4);
+  const hue = 0.06 + Math.random() * 0.04;
+  const mat = new THREE.MeshStandardMaterial({
+    color: new THREE.Color().setHSL(hue, 0.4, 0.12 + Math.random() * 0.2),
+    roughness: 0.8,
+  });
+  const blade = new THREE.Mesh(geo, mat);
+  blade.position.set((Math.random() - 0.5) * 24, -3.5 + h / 2, (Math.random() - 0.5) * 24);
+  blade.castShadow = true;
+  scene.add(blade);
+}
+
+const particleCount = 120;
+const particlesGeo = new THREE.BufferGeometry();
+const particlePositions = new Float32Array(particleCount * 3);
+const particleData = [];
+for (let i = 0; i < particleCount; i++) {
+  particlePositions[i * 3] = (Math.random() - 0.5) * 20;
+  particlePositions[i * 3 + 1] = Math.random() * 8 - 2;
+  particlePositions[i * 3 + 2] = (Math.random() - 0.5) * 20;
+  particleData.push({
+    baseY: particlePositions[i * 3 + 1],
+    speed: 0.2 + Math.random() * 0.8,
+    amplitude: 0.3 + Math.random() * 1.5,
+    offset: Math.random() * Math.PI * 2,
+  });
+}
+particlesGeo.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
+const particlesMat = new THREE.PointsMaterial({
+  color: 0xff8899, size: 0.06, transparent: true, opacity: 0.55,
+  blending: THREE.AdditiveBlending, depthWrite: false,
+});
+const particles = new THREE.Points(particlesGeo, particlesMat);
+scene.add(particles);
+
+function createMosquito(bodyColor = 0x5a3a2a, wingColor = 0xeeddcc) {
+  const group = new THREE.Group();
+
+  const abdomenGeo = new THREE.SphereGeometry(0.08, 12, 12);
+  abdomenGeo.scale(1, 1, 1.8);
+  const abdomen = new THREE.Mesh(abdomenGeo, new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.5 }));
+  abdomen.position.z = -0.22;
+  abdomen.name = 'abdomen';
+  group.add(abdomen);
+
+  const thoraxGeo = new THREE.SphereGeometry(0.09, 12, 12);
+  const thorax = new THREE.Mesh(thoraxGeo, new THREE.MeshStandardMaterial({ color: 0x2a2020, roughness: 0.4 }));
+  thorax.name = 'thorax';
+  group.add(thorax);
+
+  const headGeo = new THREE.SphereGeometry(0.055, 10, 10);
+  const head = new THREE.Mesh(headGeo, new THREE.MeshStandardMaterial({ color: 0x1a1010, roughness: 0.3 }));
+  head.position.z = 0.14;
+  head.name = 'head';
+  group.add(head);
+
+  const eyeGeo = new THREE.SphereGeometry(0.022, 8, 8);
+  const eyeMat = new THREE.MeshStandardMaterial({ color: 0xff2200, emissive: 0x330000, roughness: 0.2 });
+  const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
+  leftEye.position.set(0.036, 0.02, 0.15);
+  leftEye.name = 'leftEye';
+  group.add(leftEye);
+  const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
+  rightEye.position.set(-0.036, 0.02, 0.15);
+  rightEye.name = 'rightEye';
+  group.add(rightEye);
+
+  const probGeo = new THREE.CylinderGeometry(0.005, 0.009, 0.22, 8);
+  probGeo.rotateX(Math.PI / 2);
+  const proboscis = new THREE.Mesh(probGeo, new THREE.MeshStandardMaterial({ color: 0x181010, roughness: 0.3 }));
+  proboscis.position.set(0, -0.035, 0.26);
+  proboscis.name = 'proboscis';
+  group.add(proboscis);
+
+  const wingGeo = new THREE.PlaneGeometry(0.2, 0.07);
+  const wingMat = new THREE.MeshStandardMaterial({
+    color: wingColor, transparent: true, opacity: 0.35, side: THREE.DoubleSide, roughness: 0.15, depthWrite: false,
+  });
+  const leftWing = new THREE.Mesh(wingGeo, wingMat);
+  leftWing.position.set(0.08, 0.065, -0.02);
+  leftWing.name = 'leftWing';
+  group.add(leftWing);
+  const rightWing = new THREE.Mesh(wingGeo, wingMat);
+  rightWing.position.set(-0.08, 0.065, -0.02);
+  rightWing.name = 'rightWing';
+  group.add(rightWing);
+
+  const legPairs = [
+    { x: 0.045, z: 0.06, a: 0.35 },
+    { x: -0.045, z: 0.06, a: -0.35 },
+    { x: 0.055, z: -0.02, a: 0.45 },
+    { x: -0.055, z: -0.02, a: -0.45 },
+    { x: 0.045, z: -0.12, a: 0.55 },
+    { x: -0.045, z: -0.12, a: -0.55 },
+  ];
+  legPairs.forEach(({ x, z, a }) => {
+    const legGroup = new THREE.Group();
+    const upperGeo = new THREE.CylinderGeometry(0.005, 0.008, 0.16, 6);
+    const legMat = new THREE.MeshStandardMaterial({ color: 0x3a2820, roughness: 0.6 });
+    const upper = new THREE.Mesh(upperGeo, legMat);
+    upper.position.y = -0.07;
+    legGroup.add(upper);
+    const lowerGeo = new THREE.CylinderGeometry(0.003, 0.005, 0.13, 6);
+    const lower = new THREE.Mesh(lowerGeo, legMat);
+    lower.position.y = -0.2;
+    legGroup.add(lower);
+    const footGeo = new THREE.SphereGeometry(0.008, 4, 4);
+    const foot = new THREE.Mesh(footGeo, legMat);
+    foot.position.y = -0.27;
+    legGroup.add(foot);
+    legGroup.position.set(x, -0.03, z);
+    legGroup.rotation.z = a;
+    legGroup.name = 'leg';
+    group.add(legGroup);
+  });
+
+  return group;
+}
+
+const partner = createMosquito(0x5a3a28, 0xeeddcc);
+partner.position.set(0, 1.6, 3);
+partner.rotation.y = Math.PI;
+scene.add(partner);
+
+const glowGeo = new THREE.SphereGeometry(0.45, 16, 16);
+const glowMat = new THREE.MeshBasicMaterial({
+  color: 0xff4477, transparent: true, opacity: 0.12, depthWrite: false,
+});
+const glow = new THREE.Mesh(glowGeo, glowMat);
+partner.add(glow);
+
+const playerVisuals = new THREE.Group();
+camera.add(playerVisuals);
+
+const playerProbGeo = new THREE.CylinderGeometry(0.005, 0.008, 0.18, 8);
+playerProbGeo.rotateX(Math.PI / 2);
+const playerProb = new THREE.Mesh(playerProbGeo, new THREE.MeshStandardMaterial({ color: 0x181010, roughness: 0.3 }));
+playerProb.position.set(0, -0.12, -0.22);
+playerVisuals.add(playerProb);
+
+const pWingGeo = new THREE.PlaneGeometry(0.1, 0.035);
+const pWingMat = new THREE.MeshStandardMaterial({
+  color: 0xdddddd, transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false,
+});
+const pLeftWing = new THREE.Mesh(pWingGeo, pWingMat);
+pLeftWing.position.set(0.12, 0.04, -0.12);
+pLeftWing.rotation.y = -0.5;
+playerVisuals.add(pLeftWing);
+const pRightWing = new THREE.Mesh(pWingGeo, pWingMat);
+pRightWing.position.set(-0.12, 0.04, -0.12);
+pRightWing.rotation.y = 0.5;
+playerVisuals.add(pRightWing);
+
+let audioCtx = null;
+let buzzNodes = null;
+let matingNodes = null;
+
+function initAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+
+function startBuzz() {
+  if (!audioCtx || buzzNodes) return;
+  const ctx = audioCtx;
+  const osc = ctx.createOscillator();
+  const lfo = ctx.createOscillator();
+  const lfoGain = ctx.createGain();
+  const mainGain = ctx.createGain();
+
+  osc.type = 'sawtooth';
+  osc.frequency.value = 170;
+  lfo.type = 'sine';
+  lfo.frequency.value = 14;
+  lfoGain.gain.value = 28;
+  lfo.connect(lfoGain);
+  lfoGain.connect(osc.frequency);
+  mainGain.gain.setValueAtTime(0.04, ctx.currentTime);
+  osc.connect(mainGain);
+  mainGain.connect(ctx.destination);
+  osc.start();
+  lfo.start();
+  buzzNodes = { osc, lfo, mainGain };
+}
+
+function stopBuzz() {
+  if (!buzzNodes) return;
+  const ctx = audioCtx;
+  if (!ctx) return;
+  buzzNodes.mainGain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.25);
+  setTimeout(() => {
+    try { buzzNodes.osc.stop(); buzzNodes.lfo.stop(); } catch (_) {}
+    buzzNodes = null;
+  }, 300);
+}
+
+function startMatingSound() {
+  if (!audioCtx || matingNodes) return;
+  const ctx = audioCtx;
+  const osc = ctx.createOscillator();
+  const vib = ctx.createOscillator();
+  const vibGain = ctx.createGain();
+  const mainGain = ctx.createGain();
+
+  osc.type = 'sine';
+  osc.frequency.value = 220;
+  vib.type = 'sine';
+  vib.frequency.value = 3;
+  vibGain.gain.value = 15;
+  vib.connect(vibGain);
+  vibGain.connect(osc.frequency);
+  mainGain.gain.setValueAtTime(0.08, ctx.currentTime);
+  mainGain.gain.linearRampToValueAtTime(0.18, ctx.currentTime + 1.5);
+  osc.connect(mainGain);
+  mainGain.connect(ctx.destination);
+  osc.start();
+  vib.start();
+  matingNodes = { osc, vib, mainGain };
+}
+
+function stopMatingSound() {
+  if (!matingNodes) return;
+  const ctx = audioCtx;
+  if (!ctx) return;
+  matingNodes.mainGain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.4);
+  setTimeout(() => {
+    try { matingNodes.osc.stop(); matingNodes.vib.stop(); } catch (_) {}
+    matingNodes = null;
+  }, 500);
+}
+
+let playerYaw = 0, playerPitch = 0;
+
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyW' || e.code === 'Space') { e.preventDefault(); moveForward = true; initAudio(); startBuzz(); }
+});
+document.addEventListener('keyup', (e) => {
+  if (e.code === 'KeyW' || e.code === 'Space') { moveForward = false; stopBuzz(); }
+});
+
+let mouseDown = false;
+document.addEventListener('mousedown', () => { mouseDown = true; initAudio(); });
+document.addEventListener('mouseup', () => { mouseDown = false; });
+document.addEventListener('mousemove', (e) => {
+  if (!mouseDown) return;
+  playerYaw -= e.movementX * 0.003;
+  playerPitch = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, playerPitch - e.movementY * 0.003));
+});
+
+document.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  moveForward = true;
+  initAudio();
+  startBuzz();
+}, { passive: false });
+document.addEventListener('touchend', () => { moveForward = false; stopBuzz(); });
+document.addEventListener('touchcancel', () => { moveForward = false; stopBuzz(); });
+
+let touchLookActive = false;
+let lastTouchX = 0, lastTouchY = 0;
+document.addEventListener('touchstart', (e) => {
+  if (e.touches.length === 1) {
+    touchLookActive = true;
+    lastTouchX = e.touches[0].clientX;
+    lastTouchY = e.touches[0].clientY;
+  }
+}, { passive: false });
+document.addEventListener('touchmove', (e) => {
+  if (!touchLookActive || e.touches.length !== 1) return;
+  e.preventDefault();
+  const dx = e.touches[0].clientX - lastTouchX;
+  const dy = e.touches[0].clientY - lastTouchY;
+  playerYaw -= dx * 0.005;
+  playerPitch = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, playerPitch - dy * 0.005));
+  lastTouchX = e.touches[0].clientX;
+  lastTouchY = e.touches[0].clientY;
+}, { passive: false });
+document.addEventListener('touchend', () => { touchLookActive = false; });
+
+if (typeof DeviceOrientationEvent !== 'undefined' && 'ontouchstart' in window) {
+  window.addEventListener('deviceorientation', (e) => {
+    if (e.gamma !== null && e.beta !== null) {
+      playerYaw = THREE.MathUtils.lerp(playerYaw, e.gamma * (Math.PI / 180), 0.1);
+      playerPitch = THREE.MathUtils.lerp(playerPitch, (e.beta - 45) * (Math.PI / 180) * 0.5, 0.1);
+    }
+  }, true);
+}
+
+function startGame() {
+  gameState = 'FLYING';
+  matingTimer = 0;
+  gazeTimer = 0;
+  player.position.set(0, 1.6, -6);
+  partner.position.set(0, 1.6, 3);
+  partner.rotation.y = Math.PI;
+  partner.children.forEach(c => {
+    if (c.name === 'abdomen') { c.rotation.x = 0; c.position.z = -0.22; }
+  });
+  $('start-screen').style.display = 'none';
+  $('game-hud').style.display = 'flex';
+  $('complete-screen').style.display = 'none';
+  $('hud-bar-container').style.display = 'block';
+  $('hud-status').textContent = 'Seeking mate...';
+  $('hud-bar').style.width = '0%';
+  $('hint').textContent = 'Touch & hold / W to fly  |  Drag / tilt to look';
+}
+
+function resetGame() {
+  startGame();
+}
+
+function calculateDistance() {
+  const pos = renderer.xr.isPresenting ? camera.getWorldPosition(new THREE.Vector3()) : player.position;
+  return pos.distanceTo(partner.position);
+}
+
+function getPlayerForward() {
+  const fwd = new THREE.Vector3(0, 0, -1);
+  fwd.applyQuaternion(camera.quaternion);
+  return fwd;
+}
+
+function isLookingAtPartner() {
+  const fwd = getPlayerForward();
+  const pos = renderer.xr.isPresenting ? camera.getWorldPosition(new THREE.Vector3()) : player.position;
+  const toPartner = new THREE.Vector3().subVectors(partner.position, pos).normalize();
+  return fwd.dot(toPartner);
+}
+
+function startMating() {
+  gameState = 'MATING';
+  matingTimer = 0;
+  stopBuzz();
+  initAudio();
+  startMatingSound();
+  $('hud-bar-container').style.display = 'block';
+  $('hud-status').textContent = 'Mating...';
+  $('hud-bar').style.width = '0%';
+  $('hint').textContent = '';
+
+  for (const emoji of ['❤️', '💕', '💗', '🦟']) {
+    const el = document.createElement('span');
+    el.textContent = emoji;
+    el.style.cssText = 'position:fixed;z-index:20;pointer-events:none;font-size:24px;animation:heartFloat 2s ease-out forwards;';
+    el.style.left = (40 + Math.random() * 20) + '%';
+    el.style.top = (55 + Math.random() * 15) + '%';
+    el.style.animationDelay = (Math.random() * 1.5) + 's';
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 2500);
+  }
+}
+
+function completeMating() {
+  gameState = 'COMPLETE';
+  stopMatingSound();
+  $('game-hud').style.display = 'none';
+  $('complete-screen').style.display = 'flex';
+  $('hint').textContent = '';
+
+  if (navigator.vibrate) {
+    navigator.vibrate([100, 50, 100, 50, 200]);
+  }
+
+  for (let i = 0; i < 12; i++) {
+    const el = document.createElement('span');
+    el.textContent = ['❤️', '💕', '💗', '💖', '🦟', '✨'][i % 6];
+    el.style.cssText = 'position:fixed;z-index:20;pointer-events:none;font-size:' + (20 + Math.random() * 20) + 'px;animation:heartFloat 2.5s ease-out forwards;';
+    el.style.left = (20 + Math.random() * 60) + '%';
+    el.style.top = (30 + Math.random() * 50) + '%';
+    el.style.animationDelay = (Math.random() * 2) + 's';
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 3000);
+  }
+}
+
+function updatePartnerBehavior(dt) {
+  if (gameState === 'FLYING') {
+    const t = Date.now() * 0.001;
+    if (renderer.xr.isPresenting) {
+      const camPos = new THREE.Vector3();
+      camera.getWorldPosition(camPos);
+      const camFwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+      partner.position.copy(camPos).addScaledVector(camFwd, 2.5);
+      partner.position.y += 0.2 + Math.sin(t * 1.4) * 0.15;
+      partner.position.x += Math.sin(t * 0.7) * 0.4;
+      partner.position.z += Math.cos(t * 0.5) * 0.3;
+    } else {
+      partner.position.y = 1.6 + Math.sin(t * 1.4) * 0.2;
+      partner.position.x = Math.sin(t * 0.7) * 0.5;
+      partner.position.z = 3 + Math.cos(t * 0.5) * 0.3;
+    }
+    partner.rotation.y = Math.PI + Math.sin(t * 0.55) * 0.35;
+    partner.rotation.x = Math.sin(t * 0.8) * 0.08;
+  } else if (gameState === 'MATING') {
+    const playerPos = renderer.xr.isPresenting
+      ? camera.getWorldPosition(new THREE.Vector3())
+      : player.position;
+    const target = playerPos.clone();
+    target.z += 0.35;
+    partner.position.lerp(target, dt * 3);
+    partner.lookAt(playerPos);
+    partner.rotateY(Math.PI);
+  }
+
+  const wingSpeed = gameState === 'MATING' ? 55 : 35;
+  const wingAngle = Math.sin(Date.now() * 0.001 * wingSpeed) * 0.75;
+  partner.children.forEach(c => {
+    if (c.name === 'leftWing') c.rotation.z = wingAngle;
+    if (c.name === 'rightWing') c.rotation.z = -wingAngle;
+  });
+
+  if (gameState === 'MATING') {
+    const abdomenChild = partner.children.find(c => c.name === 'abdomen');
+    if (abdomenChild) {
+      const t = matingTimer / MATING_DURATION;
+      abdomenChild.rotation.x = t * 0.6;
+    }
+  } else {
+    const abdomenChild = partner.children.find(c => c.name === 'abdomen');
+    if (abdomenChild) {
+      abdomenChild.rotation.x = THREE.MathUtils.lerp(abdomenChild.rotation.x, 0, dt * 5);
+    }
+  }
+
+  if (gameState === 'MATING') {
+    glow.material.opacity = 0.12 + Math.sin(Date.now() * 0.012) * 0.1 + matingTimer / MATING_DURATION * 0.15;
+  } else {
+    const dist = calculateDistance();
+    const nearFactor = Math.max(0, 1 - dist / MATING_DISTANCE);
+    glow.material.opacity = 0.08 + nearFactor * 0.15 + Math.sin(Date.now() * 0.005) * 0.03;
+  }
+}
+
+function updatePlayerWings() {
+  const wingAngle = Math.sin(Date.now() * 0.001 * 35) * 0.55;
+  pLeftWing.rotation.z = wingAngle;
+  pRightWing.rotation.z = -wingAngle;
+}
+
+function updateParticles(dt) {
+  const t = Date.now() * 0.001;
+  const pos = particles.geometry.attributes.position.array;
+  for (let i = 0; i < particleCount; i++) {
+    const d = particleData[i];
+    pos[i * 3 + 1] = d.baseY + Math.sin(t * d.speed + d.offset) * d.amplitude;
+    pos[i * 3] += Math.cos(t * 0.3 + d.offset) * dt * 0.15;
+    pos[i * 3 + 2] += Math.sin(t * 0.35 + d.offset) * dt * 0.15;
+    if (Math.abs(pos[i * 3]) > 10) pos[i * 3] *= -0.9;
+    if (Math.abs(pos[i * 3 + 2]) > 10) pos[i * 3 + 2] *= -0.9;
+  }
+  particles.geometry.attributes.position.needsUpdate = true;
+}
+
+function updateMating(dt) {
+  if (gameState !== 'MATING') return;
+  matingTimer += dt;
+  const progress = Math.min(1, matingTimer / MATING_DURATION);
+  $('hud-bar').style.width = (progress * 100) + '%';
+
+  const shake = 0.025 * (1 - progress);
+  camera.position.x = (Math.random() - 0.5) * shake;
+  camera.position.y = (Math.random() - 0.5) * shake;
+  camera.position.z = (Math.random() - 0.5) * shake * 0.5;
+
+  if (navigator.vibrate && Math.random() < progress * 0.25) {
+    navigator.vibrate(30 + Math.random() * 30);
+  }
+
+  if (progress >= 1) completeMating();
+}
+
+function update(dt) {
+  if ((gameState === 'FLYING' || gameState === 'MATING') && moveForward && !renderer.xr.isPresenting) {
+    const fwd = getPlayerForward();
+    player.position.addScaledVector(fwd, MOVE_SPEED * dt);
+    player.position.y = Math.max(0.3, Math.min(6, player.position.y));
+    player.position.x = THREE.MathUtils.clamp(player.position.x, -10, 10);
+    player.position.z = THREE.MathUtils.clamp(player.position.z, -10, 10);
+  }
+
+  camera.rotation.order = 'YXZ';
+  if (!renderer.xr.isPresenting) {
+    camera.rotation.y = playerYaw;
+    camera.rotation.x = playerPitch;
+    camera.rotation.z = 0;
+  }
+
+  if (gameState !== 'MATING' && !renderer.xr.isPresenting) {
+    camera.position.set(0, 0, 0);
+  }
+
+  updatePartnerBehavior(dt);
+  updatePlayerWings();
+  updateParticles(dt);
+
+  if (gameState === 'FLYING') {
+    const dist = calculateDistance();
+    const lookDot = isLookingAtPartner();
+
+    $('hud-bar').style.width = Math.max(0, Math.min(100, (1 - dist / 8) * 100)) + '%';
+
+    if (dist < 2) $('hud-status').textContent = 'Very close!';
+    else if (dist < 4) $('hud-status').textContent = 'Getting closer...';
+    else if (dist < 6) $('hud-status').textContent = 'Fly towards the glow...';
+    else $('hud-status').textContent = 'Seeking mate...';
+
+    if (lookDot > 0.88 && dist < MATING_DISTANCE * 1.5) {
+      gazeTimer += dt;
+      if (gazeTimer >= GAZE_DURATION && dist < MATING_DISTANCE) {
+        startMating();
+        gazeTimer = 0;
+      }
+    } else {
+      gazeTimer = Math.max(0, gazeTimer - dt * 2);
+    }
+
+    if (gazeTimer > 0.5) {
+      $('hint').textContent = 'Hold gaze to connect... ' + Math.floor(gazeTimer / GAZE_DURATION * 100) + '%';
+    } else if (moveForward) {
+      $('hint').textContent = 'Flying... distance: ' + dist.toFixed(1) + 'm';
+    } else {
+      $('hint').textContent = 'Fly towards the glowing mosquito';
+    }
+  }
+
+  if (gameState === 'MATING') {
+    updateMating(dt);
+  }
+}
+
+const clock = new THREE.Clock();
+
+function animate(timestamp, xrFrame) {
+  const dt = Math.min(clock.getDelta(), 0.1);
+
+  if (renderer.xr.isPresenting) {
+    if (gameState === 'MENU' || gameState === 'COMPLETE') {
+      startGame();
+    }
+    if (xrFrame) {
+      const session = renderer.xr.getSession();
+      if (session && session.inputSources) {
+        let anyTrigger = false;
+        for (const source of session.inputSources) {
+          if (source.gamepad && source.gamepad.buttons[0]?.pressed) {
+            anyTrigger = true;
+          }
+        }
+        moveForward = anyTrigger;
+      }
+    }
+  }
+
+  update(dt);
+  renderer.render(scene, camera);
+}
+
+$('start-btn').addEventListener('click', startGame);
+$('restart-btn').addEventListener('click', resetGame);
+
+let vrButton = null;
+try {
+  vrButton = VRButton.createButton(renderer, {
+    optionalFeatures: ['local-floor', 'bounded-floor'],
+  });
+  vrButton.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:30;padding:12px 24px;background:linear-gradient(135deg,#ff3355,#cc2244);color:#fff;border:none;border-radius:12px;font-size:16px;font-weight:700;cursor:pointer;box-shadow:0 4px 20px rgba(255,51,85,.4);';
+  document.body.appendChild(vrButton);
+} catch (_) {}
+
+if (navigator.xr) {
+  navigator.xr.isSessionSupported('immersive-vr').then(s => {
+    if (s && vrButton) vrButton.style.display = 'block';
+  }).catch(() => {});
+}
+
+renderer.xr.addEventListener('sessionstart', () => {
+  initAudio();
+  startBuzz();
+  if (gameState === 'MENU') startGame();
+});
+renderer.xr.addEventListener('sessionend', () => {
+  moveForward = false;
+  stopBuzz();
+  stopMatingSound();
+  if (gameState === 'COMPLETE') {
+    $('complete-screen').style.display = 'flex';
+    $('game-hud').style.display = 'none';
+  }
+});
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+renderer.setAnimationLoop(animate);
+</script>
+
+</body>
+</html>
