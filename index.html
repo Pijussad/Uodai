@@ -159,7 +159,7 @@ const player = new THREE.Group();
 player.add(camera);
 camera.position.set(0, 0, 0);
 scene.add(player);
-player.position.set(0, 1.6, -6);
+player.position.set(0, 1.6, 0);
 
 const ambient = new THREE.AmbientLight(0x221122, 0.6);
 scene.add(ambient);
@@ -196,7 +196,12 @@ for (let i = 0; i < 30; i++) {
     roughness: 0.8,
   });
   const blade = new THREE.Mesh(geo, mat);
-  blade.position.set((Math.random() - 0.5) * 24, -3.5 + h / 2, (Math.random() - 0.5) * 24);
+  let bx = (Math.random() - 0.5) * 24;
+  let bz = (Math.random() - 0.5) * 24;
+  if (Math.abs(bx) < 2.5 && bz < 2 && bz > -12) {
+    bx += (bx > 0 ? 3 : -3);
+  }
+  blade.position.set(bx, -3.5 + h / 2, bz);
   blade.castShadow = true;
   scene.add(blade);
 }
@@ -309,8 +314,8 @@ function createMosquito(bodyColor = 0x5a3a2a, wingColor = 0xeeddcc) {
 }
 
 const partner = createMosquito(0x5a3a28, 0xeeddcc);
-partner.position.set(0, 1.6, 3);
-partner.rotation.y = Math.PI;
+partner.position.set(0, 1.6, -9);
+partner.rotation.y = 0;
 scene.add(partner);
 
 const glowGeo = new THREE.SphereGeometry(0.45, 16, 16);
@@ -323,23 +328,23 @@ partner.add(glow);
 const playerVisuals = new THREE.Group();
 camera.add(playerVisuals);
 
-const playerProbGeo = new THREE.CylinderGeometry(0.005, 0.008, 0.18, 8);
+const playerProbGeo = new THREE.CylinderGeometry(0.003, 0.005, 0.15, 8);
 playerProbGeo.rotateX(Math.PI / 2);
 const playerProb = new THREE.Mesh(playerProbGeo, new THREE.MeshStandardMaterial({ color: 0x181010, roughness: 0.3 }));
-playerProb.position.set(0, -0.12, -0.22);
+playerProb.position.set(0, -0.15, -0.25);
 playerVisuals.add(playerProb);
 
-const pWingGeo = new THREE.PlaneGeometry(0.1, 0.035);
+const pWingGeo = new THREE.PlaneGeometry(0.08, 0.025);
 const pWingMat = new THREE.MeshStandardMaterial({
-  color: 0xdddddd, transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false,
+  color: 0xdddddd, transparent: true, opacity: 0.15, side: THREE.DoubleSide, depthWrite: false,
 });
 const pLeftWing = new THREE.Mesh(pWingGeo, pWingMat);
-pLeftWing.position.set(0.12, 0.04, -0.12);
-pLeftWing.rotation.y = -0.5;
+pLeftWing.position.set(0.18, -0.05, -0.18);
+pLeftWing.rotation.y = -0.3;
 playerVisuals.add(pLeftWing);
 const pRightWing = new THREE.Mesh(pWingGeo, pWingMat);
-pRightWing.position.set(-0.12, 0.04, -0.12);
-pRightWing.rotation.y = 0.5;
+pRightWing.position.set(-0.18, -0.05, -0.18);
+pRightWing.rotation.y = 0.3;
 playerVisuals.add(pRightWing);
 
 let audioCtx = null;
@@ -432,8 +437,18 @@ document.addEventListener('keyup', (e) => {
 });
 
 let mouseDown = false;
-document.addEventListener('mousedown', () => { mouseDown = true; initAudio(); });
-document.addEventListener('mouseup', () => { mouseDown = false; });
+document.addEventListener('mousedown', (e) => { 
+  if (!isGameTouch(e)) return;
+  mouseDown = true; 
+  moveForward = true;
+  initAudio(); 
+  startBuzz();
+});
+document.addEventListener('mouseup', () => { 
+  mouseDown = false; 
+  moveForward = false;
+  stopBuzz();
+});
 document.addEventListener('mousemove', (e) => {
   if (!mouseDown) return;
   playerYaw -= e.movementX * 0.003;
@@ -491,9 +506,9 @@ function startGame() {
   gameState = 'FLYING';
   matingTimer = 0;
   gazeTimer = 0;
-  player.position.set(0, 1.6, -6);
-  partner.position.set(0, 1.6, 3);
-  partner.rotation.y = Math.PI;
+  player.position.set(0, 1.6, 0);
+  partner.position.set(0, 1.6, -9);
+  partner.rotation.y = 0;
   partner.children.forEach(c => {
     if (c.name === 'abdomen') { c.rotation.x = 0; c.position.z = -0.22; }
   });
@@ -503,7 +518,7 @@ function startGame() {
   $('hud-bar-container').style.display = 'block';
   $('hud-status').textContent = 'Seeking mate...';
   $('hud-bar').style.width = '0%';
-  $('hint').textContent = 'Touch & hold / W to fly  |  Drag / tilt to look';
+  $('hint').textContent = 'Hold CLICK / TOUCH or W to fly  |  Drag / tilt to look';
 }
 
 function resetGame() {
@@ -590,9 +605,9 @@ function updatePartnerBehavior(dt) {
     } else {
       partner.position.y = 1.6 + Math.sin(t * 1.4) * 0.2;
       partner.position.x = Math.sin(t * 0.7) * 0.5;
-      partner.position.z = 3 + Math.cos(t * 0.5) * 0.3;
+      partner.position.z = -9 + Math.cos(t * 0.5) * 0.3;
     }
-    partner.rotation.y = Math.PI + Math.sin(t * 0.55) * 0.35;
+    partner.rotation.y = Math.sin(t * 0.55) * 0.35;
     partner.rotation.x = Math.sin(t * 0.8) * 0.08;
   } else if (gameState === 'MATING') {
     const playerPos = renderer.xr.isPresenting
@@ -727,7 +742,7 @@ function update(dt) {
     } else if (moveForward) {
       $('hint').textContent = 'Flying... distance: ' + dist.toFixed(1) + 'm';
     } else {
-      $('hint').textContent = 'Fly towards the glowing mosquito';
+      $('hint').textContent = 'Hold CLICK / TOUCH or W to fly towards the glowing mosquito';
     }
   }
 
