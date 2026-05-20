@@ -142,6 +142,7 @@ let gameState = 'MENU';
 let matingTimer = 0;
 let gazeTimer = 0;
 let moveForward = false;
+let partnerBaseZ = -9;
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -506,8 +507,15 @@ function startGame() {
   gameState = 'FLYING';
   matingTimer = 0;
   gazeTimer = 0;
+  
+  if (renderer.xr.isPresenting) {
+    partnerBaseZ = -2.5; // Closer for VR
+  } else {
+    partnerBaseZ = -9;
+  }
+  
   player.position.set(0, 1.6, 0);
-  partner.position.set(0, 1.6, -9);
+  partner.position.set(0, 1.6, partnerBaseZ);
   partner.rotation.y = 0;
   partner.children.forEach(c => {
     if (c.name === 'abdomen') { c.rotation.x = 0; c.position.z = -0.22; }
@@ -594,19 +602,9 @@ function completeMating() {
 function updatePartnerBehavior(dt) {
   if (gameState === 'FLYING') {
     const t = Date.now() * 0.001;
-    if (renderer.xr.isPresenting) {
-      const camPos = new THREE.Vector3();
-      camera.getWorldPosition(camPos);
-      const camFwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-      partner.position.copy(camPos).addScaledVector(camFwd, 1.2);
-      partner.position.y += 0.2 + Math.sin(t * 1.4) * 0.15;
-      partner.position.x += Math.sin(t * 0.7) * 0.4;
-      partner.position.z += Math.cos(t * 0.5) * 0.3;
-    } else {
-      partner.position.y = 1.6 + Math.sin(t * 1.4) * 0.2;
-      partner.position.x = Math.sin(t * 0.7) * 0.5;
-      partner.position.z = -9 + Math.cos(t * 0.5) * 0.3;
-    }
+    partner.position.y = 1.6 + Math.sin(t * 1.4) * 0.2;
+    partner.position.x = Math.sin(t * 0.7) * 0.5;
+    partner.position.z = partnerBaseZ + Math.cos(t * 0.5) * 0.3;
     partner.rotation.y = Math.sin(t * 0.55) * 0.35;
     partner.rotation.x = Math.sin(t * 0.8) * 0.08;
   } else if (gameState === 'MATING') {
