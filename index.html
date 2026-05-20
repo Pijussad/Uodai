@@ -83,6 +83,49 @@
     0% { transform: translateY(0) scale(1); opacity: 1; }
     100% { transform: translateY(-40px) scale(1.4); opacity: 0; }
   }
+
+  #vignette {
+    position: fixed; inset: 0; z-index: 8; pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.85) 100%);
+    opacity: 0; transition: opacity 0.3s;
+  }
+  #vignette.active { opacity: 1; }
+
+  #tap-prompt {
+    position: fixed; bottom: 50%; left: 50%; transform: translate(-50%, 50%);
+    z-index: 15; pointer-events: none;
+    color: #ff4477; font-size: clamp(28px, 8vw, 56px); font-weight: 900;
+    text-shadow: 0 0 40px rgba(255,68,119,0.8), 0 0 80px rgba(255,68,119,0.4);
+    opacity: 0; transition: opacity 0.2s;
+    text-align: center; line-height: 1.2;
+  }
+  #tap-prompt.active { opacity: 1; }
+  #tap-prompt .sub {
+    font-size: clamp(16px, 4vw, 28px); font-weight: 400; display: block;
+    color: #ff88aa; text-shadow: 0 0 20px rgba(255,136,170,0.6);
+  }
+
+  @keyframes climaxFlash {
+    0% { opacity: 0; }
+    20% { opacity: 0.35; }
+    100% { opacity: 0; }
+  }
+  #climax-flash {
+    position: fixed; inset: 0; z-index: 25; pointer-events: none;
+    background: #ff3366; opacity: 0;
+  }
+  #climax-flash.active { animation: climaxFlash 0.8s ease-out forwards; }
+
+  .progress-heart {
+    position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+    z-index: 12; pointer-events: none;
+    width: min(200px, 50vw); height: min(200px, 50vw);
+    opacity: 0; transition: opacity 0.3s;
+  }
+  .progress-heart.active { opacity: 1; }
+  .progress-heart svg { width: 100%; height: 100%; }
+  .progress-heart .bg { fill: rgba(255,50,80,0.15); }
+  .progress-heart .fill { fill: #ff3355; transition: d 0.2s; }
 </style>
 </head>
 <body>
@@ -110,6 +153,10 @@
     <button id="restart-btn" class="btn">MATE AGAIN</button>
   </div>
 </div>
+
+<div id="vignette"></div>
+<div id="tap-prompt"></div>
+<div id="climax-flash"></div>
 
 <div class="hint-text" id="hint"></div>
 
@@ -143,6 +190,10 @@ let matingTimer = 0;
 let gazeTimer = 0;
 let moveForward = false;
 let partnerBaseZ = -9;
+let matingIntensity = 0;
+let tapCount = 0;
+let lastTapTime = 0;
+let matingTapBoost = 0;
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -430,11 +481,33 @@ function stopMatingSound() {
 
 let playerYaw = 0, playerPitch = 0;
 
+function onTap() {
+  if (gameState === 'MATING') {
+    const now = performance.now();
+    const dt = now - lastTapTime;
+    lastTapTime = now;
+    tapCount++;
+    const speedBonus = Math.min(0.03, 0.5 / (dt + 50));
+    matingTapBoost = Math.min(0.15, matingTapBoost + 0.02 + speedBonus);
+
+    const heart = document.createElement('span');
+    heart.textContent = ['❤️','💕','💗','💖'][Math.floor(Math.random()*4)];
+    heart.style.cssText = 'position:fixed;z-index:15;pointer-events:none;font-size:'+(14+Math.random()*18)+'px;';
+    heart.style.left = (20 + Math.random()*60) + '%';
+    heart.style.top = (40 + Math.random()*40) + '%';
+    heart.style.animation = 'heartFloat 1.2s ease-out forwards';
+    document.body.appendChild(heart);
+    setTimeout(() => heart.remove(), 1300);
+
+    if (navigator.vibrate) navigator.vibrate(15);
+  }
+}
+
 document.addEventListener('keydown', (e) => {
-  if (e.code === 'KeyW' || e.code === 'Space') { e.preventDefault(); moveForward = true; initAudio(); startBuzz(); }
+  if (e.code === 'KeyW' || e.code === 'Space') { e.preventDefault(); moveForward = true; initAudio(); startBuzz(); onTap(); }
 });
 document.addEventListener('keyup', (e) => {
-  if (e.code === 'KeyW' || e.code === 'Space') { moveForward = false; stopBuzz(); }
+  if (e.code === 'KeyW' || e.code === 'Space') { moveForward = false; if (gameState !== 'MATING') stopBuzz(); }
 });
 
 let mouseDown = false;
@@ -444,11 +517,12 @@ document.addEventListener('mousedown', (e) => {
   moveForward = true;
   initAudio(); 
   startBuzz();
+  onTap();
 });
 document.addEventListener('mouseup', () => { 
   mouseDown = false; 
   moveForward = false;
-  stopBuzz();
+  if (gameState !== 'MATING') stopBuzz();
 });
 document.addEventListener('mousemove', (e) => {
   if (!mouseDown) return;
@@ -467,9 +541,10 @@ document.addEventListener('touchstart', (e) => {
   moveForward = true;
   initAudio();
   startBuzz();
+  onTap();
 }, { passive: false });
-document.addEventListener('touchend', () => { moveForward = false; stopBuzz(); });
-document.addEventListener('touchcancel', () => { moveForward = false; stopBuzz(); });
+document.addEventListener('touchend', () => { moveForward = false; if (gameState !== 'MATING') stopBuzz(); });
+document.addEventListener('touchcancel', () => { moveForward = false; if (gameState !== 'MATING') stopBuzz(); });
 
 let touchLookActive = false;
 let lastTouchX = 0, lastTouchY = 0;
@@ -555,23 +630,29 @@ function startMating() {
   console.log('[Game] Mating started');
   gameState = 'MATING';
   matingTimer = 0;
+  tapCount = 0;
+  matingTapBoost = 0;
+  lastTapTime = 0;
   stopBuzz();
   initAudio();
   startMatingSound();
   $('hud-bar-container').style.display = 'block';
-  $('hud-status').textContent = 'Mating...';
+  $('hud-status').textContent = 'TAP! TAP! TAP!';
   $('hud-bar').style.width = '0%';
   $('hint').textContent = '';
+  $('vignette').classList.add('active');
+  $('tap-prompt').innerHTML = 'TAP!<span class="sub">Faster!</span>';
+  $('tap-prompt').classList.add('active');
 
-  for (const emoji of ['❤️', '💕', '💗', '🦟']) {
+  for (let i = 0; i < 8; i++) {
     const el = document.createElement('span');
-    el.textContent = emoji;
-    el.style.cssText = 'position:fixed;z-index:20;pointer-events:none;font-size:24px;animation:heartFloat 2s ease-out forwards;';
-    el.style.left = (40 + Math.random() * 20) + '%';
-    el.style.top = (55 + Math.random() * 15) + '%';
-    el.style.animationDelay = (Math.random() * 1.5) + 's';
+    el.textContent = ['❤️','💕','💗','🦟'][i%4];
+    el.style.cssText = 'position:fixed;z-index:15;pointer-events:none;font-size:'+(16+Math.random()*20)+'px;animation:heartFloat '+(1.5+Math.random())+'s ease-out forwards;';
+    el.style.left = (10 + Math.random() * 80) + '%';
+    el.style.top = (30 + Math.random() * 40) + '%';
+    el.style.animationDelay = (Math.random() * 2) + 's';
     document.body.appendChild(el);
-    setTimeout(() => el.remove(), 2500);
+    setTimeout(() => el.remove(), 3500);
   }
 }
 
@@ -582,20 +663,28 @@ function completeMating() {
   $('game-hud').style.display = 'none';
   $('complete-screen').style.display = 'flex';
   $('hint').textContent = '';
+  $('vignette').classList.remove('active');
+  $('tap-prompt').classList.remove('active');
+  $('tap-prompt').innerHTML = '';
+
+  $('climax-flash').classList.remove('active');
+  void $('climax-flash').offsetWidth;
+  $('climax-flash').classList.add('active');
 
   if (navigator.vibrate) {
-    navigator.vibrate([100, 50, 100, 50, 200]);
+    navigator.vibrate([50, 30, 50, 30, 100, 50, 150, 50, 300]);
   }
 
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 30; i++) {
     const el = document.createElement('span');
-    el.textContent = ['❤️', '💕', '💗', '💖', '🦟', '✨'][i % 6];
-    el.style.cssText = 'position:fixed;z-index:20;pointer-events:none;font-size:' + (20 + Math.random() * 20) + 'px;animation:heartFloat 2.5s ease-out forwards;';
-    el.style.left = (20 + Math.random() * 60) + '%';
-    el.style.top = (30 + Math.random() * 50) + '%';
-    el.style.animationDelay = (Math.random() * 2) + 's';
+    el.textContent = ['❤️','💕','💗','💖','🦟','✨'][i%6];
+    el.style.cssText = 'position:fixed;z-index:25;pointer-events:none;font-size:'+(16+Math.random()*28)+'px;';
+    el.style.left = (5 + Math.random() * 90) + '%';
+    el.style.top = (10 + Math.random() * 80) + '%';
+    el.style.animation = 'heartFloat '+(1.5+Math.random()*2)+'s ease-out forwards';
+    el.style.animationDelay = (Math.random() * 0.8) + 's';
     document.body.appendChild(el);
-    setTimeout(() => el.remove(), 3000);
+    setTimeout(() => el.remove(), 3500);
   }
 }
 
@@ -639,7 +728,7 @@ function updatePartnerBehavior(dt) {
   }
 
   if (gameState === 'MATING') {
-    glow.material.opacity = 0.12 + Math.sin(Date.now() * 0.012) * 0.1 + matingTimer / MATING_DURATION * 0.15;
+    // glow managed by updateMating
   } else {
     const dist = calculateDistance();
     const nearFactor = Math.max(0, 1 - dist / MATING_DISTANCE);
@@ -669,18 +758,36 @@ function updateParticles(dt) {
 
 function updateMating(dt) {
   if (gameState !== 'MATING') return;
-  matingTimer += dt;
+
+  matingTapBoost *= 0.95;
+  const tapContribution = matingTapBoost;
+  const passiveProgress = 0.12;
+  const progressRate = passiveProgress + tapContribution;
+
+  matingTimer += dt * progressRate;
   const progress = Math.min(1, matingTimer / MATING_DURATION);
   $('hud-bar').style.width = (progress * 100) + '%';
 
-  const shake = 0.025 * (1 - progress);
+  if (progress < 0.5) {
+    $('tap-prompt').innerHTML = 'TAP!<span class="sub">Keep going!</span>';
+  } else if (progress < 0.85) {
+    $('tap-prompt').innerHTML = 'FASTER!<span class="sub">Almost there...</span>';
+  } else {
+    $('tap-prompt').innerHTML = 'YES!<span class="sub">Don\'t stop!</span>';
+  }
+
+  const shakeIntensity = 0.02 + tapCount * 0.001;
+  const shake = shakeIntensity * (1 - progress * 0.3);
   camera.position.x = (Math.random() - 0.5) * shake;
   camera.position.y = (Math.random() - 0.5) * shake;
   camera.position.z = (Math.random() - 0.5) * shake * 0.5;
 
-  if (navigator.vibrate && Math.random() < progress * 0.25) {
-    navigator.vibrate(30 + Math.random() * 30);
+  if (navigator.vibrate && Math.random() < progress * 0.4) {
+    navigator.vibrate(15 + Math.floor(progress * 30));
   }
+
+  const glowIntensity = 0.15 + progress * 0.5 + Math.sin(Date.now() * 0.015) * 0.1;
+  glow.material.opacity = glowIntensity;
 
   if (progress >= 1) completeMating();
 }
