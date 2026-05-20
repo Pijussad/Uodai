@@ -194,6 +194,8 @@ let matingIntensity = 0;
 let tapCount = 0;
 let lastTapTime = 0;
 let matingTapBoost = 0;
+let initialRefSpace = null;
+let vrCompleteTimer = 0;
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -584,10 +586,12 @@ function startGame() {
   gazeTimer = 0;
   
   if (renderer.xr.isPresenting) {
-    partnerBaseZ = -2.5; // Closer for VR
+    partnerBaseZ = -2.5;
+    if (initialRefSpace) renderer.xr.setReferenceSpace(initialRefSpace);
   } else {
     partnerBaseZ = -9;
   }
+  vrCompleteTimer = 0;
   
   player.position.set(0, 1.6, 0);
   partner.position.set(0, 1.6, partnerBaseZ);
@@ -609,8 +613,13 @@ function resetGame() {
 }
 
 function calculateDistance() {
-  const pos = renderer.xr.isPresenting ? camera.getWorldPosition(new THREE.Vector3()) : player.position;
-  return pos.distanceTo(partner.position);
+  if (renderer.xr.isPresenting) {
+    const pos = camera.getWorldPosition(new THREE.Vector3());
+    const dx = pos.x - partner.position.x;
+    const dz = pos.z - partner.position.z;
+    return Math.sqrt(dx * dx + dz * dz);
+  }
+  return player.position.distanceTo(partner.position);
 }
 
 function getPlayerForward() {
@@ -700,10 +709,10 @@ function updatePartnerBehavior(dt) {
     const playerPos = renderer.xr.isPresenting
       ? camera.getWorldPosition(new THREE.Vector3())
       : player.position;
-    const target = playerPos.clone();
-    target.z += 0.35;
+    const target = new THREE.Vector3(playerPos.x, renderer.xr.isPresenting ? 1.6 : playerPos.y, playerPos.z + 0.35);
     partner.position.lerp(target, dt * 3);
-    partner.lookAt(playerPos);
+    const lookTarget = new THREE.Vector3(playerPos.x, partner.position.y, playerPos.z);
+    partner.lookAt(lookTarget);
     partner.rotateY(Math.PI);
   }
 
@@ -862,8 +871,12 @@ function animate(timestamp, xrFrame) {
   const dt = Math.min(clock.getDelta(), 0.1);
 
   if (renderer.xr.isPresenting) {
-    if (gameState === 'MENU' || gameState === 'COMPLETE') {
+    if (!initialRefSpace) initialRefSpace = renderer.xr.getReferenceSpace();
+    if (gameState === 'MENU') {
       startGame();
+    } else if (gameState === 'COMPLETE') {
+      vrCompleteTimer += dt;
+      if (vrCompleteTimer >= 3) startGame();
     }
     if (xrFrame) {
       const session = renderer.xr.getSession();
@@ -949,6 +962,8 @@ renderer.xr.addEventListener('sessionstart', () => {
   });
 });
 renderer.xr.addEventListener('sessionend', () => {
+  initialRefSpace = null;
+  vrCompleteTimer = 0;
   moveForward = false;
   stopBuzz();
   stopMatingSound();
