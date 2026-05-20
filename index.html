@@ -872,13 +872,37 @@ function animate(timestamp, xrFrame) {
     if (xrFrame) {
       const session = renderer.xr.getSession();
       if (session && session.inputSources) {
+        let hasGamepad = false;
         let anyTrigger = false;
         for (const source of session.inputSources) {
-          if (source.gamepad && source.gamepad.buttons[0]?.pressed) {
-            anyTrigger = true;
+          if (source.gamepad) {
+            hasGamepad = true;
+            if (source.gamepad.buttons[0]?.pressed) {
+              anyTrigger = true;
+            }
           }
         }
-        moveForward = anyTrigger;
+        if (hasGamepad) {
+          moveForward = anyTrigger;
+        }
+      }
+    }
+    if (moveForward && (gameState === 'FLYING' || gameState === 'MATING')) {
+      try {
+        const refSpace = renderer.xr.getReferenceSpace();
+        if (refSpace) {
+          const fwd = new THREE.Vector3(0, 0, -1);
+          fwd.applyQuaternion(camera.quaternion);
+          fwd.y = 0;
+          fwd.normalize();
+          const offset = new XRRigidTransform(
+            { x: fwd.x * MOVE_SPEED * dt, y: 0, z: fwd.z * MOVE_SPEED * dt },
+            { x: 0, y: 0, z: 0, w: 1 }
+          );
+          renderer.xr.setReferenceSpace(refSpace.getOffsetReferenceSpace(offset));
+        }
+      } catch (e) {
+        console.warn('VR move:', e);
       }
     }
   }
