@@ -401,6 +401,121 @@ pRightWing.position.set(-0.18, -0.05, -0.18);
 pRightWing.rotation.y = 0.3;
 playerVisuals.add(pRightWing);
 
+// --- VR 3D UI Elements ---
+const vrHudCanvas = document.createElement('canvas');
+vrHudCanvas.width = 512;
+vrHudCanvas.height = 512;
+const vrHudCtx = vrHudCanvas.getContext('2d');
+const vrHudTex = new THREE.CanvasTexture(vrHudCanvas);
+const vrHudMat = new THREE.SpriteMaterial({ map: vrHudTex, transparent: true, depthTest: false });
+const vrHudSprite = new THREE.Sprite(vrHudMat);
+vrHudSprite.scale.set(1.5, 1.5, 1);
+vrHudSprite.position.set(0, 0, -1);
+camera.add(vrHudSprite);
+
+const vrFlashGeo = new THREE.PlaneGeometry(5, 5);
+const vrFlashMat = new THREE.MeshBasicMaterial({ color: 0xff3366, transparent: true, opacity: 0, depthTest: false });
+const vrFlashMesh = new THREE.Mesh(vrFlashGeo, vrFlashMat);
+vrFlashMesh.position.z = -0.5;
+camera.add(vrFlashMesh);
+
+const vrHeartCanvas = document.createElement('canvas');
+vrHeartCanvas.width = 64;
+vrHeartCanvas.height = 64;
+const vrHeartCtx = vrHeartCanvas.getContext('2d');
+vrHeartCtx.font = '50px sans-serif';
+vrHeartCtx.textAlign = 'center';
+vrHeartCtx.textBaseline = 'middle';
+vrHeartCtx.fillText('❤️', 32, 35);
+const vrHeartTex = new THREE.CanvasTexture(vrHeartCanvas);
+const vrHearts = [];
+
+function spawnVRHeart(isBig = false) {
+  const mat = new THREE.SpriteMaterial({ map: vrHeartTex, transparent: true, depthTest: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.position.set((Math.random() - 0.5) * 1.5, (Math.random() - 0.5) * 1.0, -0.8 - Math.random() * 0.5);
+  camera.add(sprite);
+  vrHearts.push({
+    mesh: sprite,
+    life: 1.5,
+    maxLife: 1.5,
+    baseScale: isBig ? 0.3 : 0.1,
+    speedY: 0.4 + Math.random() * 0.4,
+    speedX: (Math.random() - 0.5) * 0.3
+  });
+}
+
+let lastHudState = '';
+let lastHudProgress = -1;
+
+function updateVREffects(dt) {
+  if (vrFlashMesh.material.opacity > 0) {
+    vrFlashMesh.material.opacity = Math.max(0, vrFlashMesh.material.opacity - dt * 1.2);
+  }
+  for (let i = vrHearts.length - 1; i >= 0; i--) {
+    const h = vrHearts[i];
+    h.life -= dt;
+    if (h.life <= 0) {
+      camera.remove(h.mesh);
+      h.mesh.material.dispose();
+      vrHearts.splice(i, 1);
+    } else {
+      h.mesh.position.y += h.speedY * dt;
+      h.mesh.position.x += h.speedX * dt;
+      h.mesh.material.opacity = h.life / h.maxLife;
+      const s = h.baseScale * (0.5 + 0.5 * (h.life / h.maxLife));
+      h.mesh.scale.set(s, s, 1);
+    }
+  }
+
+  if (!renderer.xr.isPresenting) {
+    vrHudSprite.visible = false;
+    return;
+  }
+  vrHudSprite.visible = true;
+
+  let progress = 0;
+  if (gameState === 'MATING') progress = Math.floor((matingTimer / MATING_DURATION) * 20);
+
+  if (lastHudState !== gameState || lastHudProgress !== progress) {
+    lastHudState = gameState;
+    lastHudProgress = progress;
+    vrHudCtx.clearRect(0, 0, 512, 512);
+
+    if (gameState === 'MATING') {
+      vrHudCtx.fillStyle = '#ff4477';
+      vrHudCtx.font = 'bold 70px sans-serif';
+      vrHudCtx.textAlign = 'center';
+      vrHudCtx.textBaseline = 'middle';
+      vrHudCtx.shadowColor = 'rgba(255, 0, 50, 0.8)';
+      vrHudCtx.shadowBlur = 20;
+      
+      const realProgress = matingTimer / MATING_DURATION;
+      let text = 'TAP!';
+      if (realProgress > 0.85) text = 'YES!';
+      else if (realProgress > 0.5) text = 'FASTER!';
+      vrHudCtx.fillText(text, 256, 180);
+      vrHudCtx.shadowBlur = 0;
+
+      vrHudCtx.fillStyle = 'rgba(255, 50, 80, 0.3)';
+      vrHudCtx.fillRect(106, 260, 300, 20);
+      vrHudCtx.fillStyle = '#ff3355';
+      vrHudCtx.fillRect(106, 260, 300 * realProgress, 20);
+    } else if (gameState === 'COMPLETE') {
+      vrHudCtx.fillStyle = '#ff4477';
+      vrHudCtx.font = 'bold 70px sans-serif';
+      vrHudCtx.textAlign = 'center';
+      vrHudCtx.textBaseline = 'middle';
+      vrHudCtx.shadowColor = 'rgba(255, 0, 50, 0.8)';
+      vrHudCtx.shadowBlur = 20;
+      vrHudCtx.fillText('MATED!', 256, 256);
+      vrHudCtx.shadowBlur = 0;
+    }
+    vrHudTex.needsUpdate = true;
+  }
+}
+// ----------------------------
+
 let audioCtx = null;
 let buzzNodes = null;
 let matingNodes = null;
@@ -500,6 +615,8 @@ function onTap() {
     heart.style.animation = 'heartFloat 1.2s ease-out forwards';
     document.body.appendChild(heart);
     setTimeout(() => heart.remove(), 1300);
+
+    if (renderer.xr.isPresenting) spawnVRHeart(false);
 
     if (navigator.vibrate) navigator.vibrate(15);
   }
@@ -684,6 +801,13 @@ function completeMating() {
     navigator.vibrate([50, 30, 50, 30, 100, 50, 150, 50, 300]);
   }
 
+  if (renderer.xr.isPresenting) {
+    vrFlashMesh.material.opacity = 1.0;
+    for (let i = 0; i < 15; i++) {
+      setTimeout(() => spawnVRHeart(true), Math.random() * 800);
+    }
+  }
+
   for (let i = 0; i < 30; i++) {
     const el = document.createElement('span');
     el.textContent = ['❤️','💕','💗','💖','🦟','✨'][i%6];
@@ -824,6 +948,7 @@ function update(dt) {
   updatePartnerBehavior(dt);
   updatePlayerWings();
   updateParticles(dt);
+  updateVREffects(dt);
 
   if (gameState === 'FLYING') {
     const dist = calculateDistance();
