@@ -896,7 +896,7 @@ function animate(timestamp, xrFrame) {
           fwd.y = 0;
           fwd.normalize();
           const offset = new XRRigidTransform(
-            { x: fwd.x * MOVE_SPEED * dt, y: 0, z: fwd.z * MOVE_SPEED * dt },
+            { x: -fwd.x * MOVE_SPEED * dt, y: 0, z: -fwd.z * MOVE_SPEED * dt },
             { x: 0, y: 0, z: 0, w: 1 }
           );
           renderer.xr.setReferenceSpace(refSpace.getOffsetReferenceSpace(offset));
